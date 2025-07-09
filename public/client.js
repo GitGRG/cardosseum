@@ -57,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
   playArea.addEventListener('drop', e => {
     e.preventDefault();
     const r = playArea.getBoundingClientRect();
+    // subtract half of card dimensions to center it
     const x = e.clientX - r.left - CARD_HALF;
     const y = e.clientY - r.top  - CARD_HALF;
     const c = e.dataTransfer.getData('text/plain');
@@ -347,3 +348,5 @@ function playCard(card, x, y) {
   }
   socket.emit('play-card', { card, x, y });
 }
+
+

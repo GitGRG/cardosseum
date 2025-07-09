@@ -52,7 +52,7 @@
     const params = new URLSearchParams(location.search);
     let ROOM = params.get('room');
     if (!ROOM) {
-      ROOM = prompt('Enter game code:','') || 'lobby';
+      ROOM = prompt('Enter Room Name to Create/Join:','') || 'lobby';
       location.search = '?room=' + encodeURIComponent(ROOM);
     }
     window.GAME_ROOM = ROOM;
