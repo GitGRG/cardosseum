@@ -10,6 +10,51 @@ app.use(express.static('public'));
 // ─── Room management ─────────────────────────
 const games = {}; // roomId → game state
 
+
+// index.js, somewhere near the top:
+
+// … after const games = {} …
+
+// expose a webpage listing all active rooms
+app.get('/rooms', (req, res) => {
+  let html = `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Active Games</title>
+        <style>
+          body { background: #0c0c0c; color: #eee; font-family: sans-serif; padding: 20px; }
+          h1 { margin-bottom: 1em; }
+          ul { list-style: none; padding: 0; }
+          li { margin: 0.5em 0; }
+          a { color: #4af; text-decoration: none; }
+          a:hover { text-decoration: underline; }
+        </style>
+      </head>
+      <body>
+        <h1>Active Rooms</h1>
+        <ul>
+  `;
+
+  for (const [roomId, game] of Object.entries(games)) {
+    html += `<li>
+      <strong>${roomId}</strong> (${game.players.length}/2)
+      ${game.players.length < 2
+        ? `<a href="/?room=${encodeURIComponent(roomId)}">Join</a>`
+        : `<em>Full</em>`}
+    </li>`;
+  }
+
+  html += `
+        </ul>
+      </body>
+    </html>
+  `;
+  res.send(html);
+});
+
+
 // Layout constants (must match your client CSS)
 const WIDTH            = 500;
 const HEIGHT           = 500;
