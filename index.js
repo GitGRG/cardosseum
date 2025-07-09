@@ -1,4 +1,5 @@
-// index.js (Server-side)
+// index.js (Server-side with rooms)
+
 const express = require('express');
 const app     = express();
 const http    = require('http').createServer(app);
@@ -6,34 +7,10 @@ const io      = require('socket.io')(http);
 
 app.use(express.static('public'));
 
-let players = [];
-let hands   = {};
-let table   = [];
+// ─── Room management ─────────────────────────
+const games = {}; // roomId → game state
 
-// shuffle helper
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-// build decks
-function createMainDeck() {
-  const d = [];
-  for (let i = 1; i <= 44; i++) d.push(i.toString().padStart(2,'0'));
-  return shuffle(d);
-}
-function createSpecialDeck() {
-  const d = [];
-  for (let i = 1; i <= 10; i++) d.push(`glads/${i.toString().padStart(2,'0')}`);
-  return shuffle(d);
-}
-let deck        = createMainDeck();
-let specialDeck = createSpecialDeck();
-
-// layout
+// Layout constants (must match your client CSS)
 const WIDTH            = 500;
 const HEIGHT           = 500;
 const DOT_COUNT        = 10;
@@ -45,145 +22,241 @@ const HEX_COUNT        = 3;
 const SQUARE_COUNT     = 12;
 const SQUARE_MARGIN    = 10;
 
-// shared state
-let dotPositions    = [];
-let hexPositions    = [];
-let squarePositions = [];
+// Shuffle helper
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
 
-// init dots
-(function(){
-  const totalH = DOT_COUNT*DOT_SIZE + (DOT_COUNT-1)*DOT_MARGIN;
-  const startY = (HEIGHT-totalH)/2;
-  for (let i=0;i<DOT_COUNT;i++) dotPositions.push({x:DOT_LEFT_OFFSET,  y:startY+i*(DOT_SIZE+DOT_MARGIN)});
-  for (let i=0;i<DOT_COUNT;i++) dotPositions.push({x:DOT_RIGHT_OFFSET, y:startY+i*(DOT_SIZE+DOT_MARGIN)});
-})();
+// Build decks
+function createMainDeck() {
+  const d = [];
+  for (let i = 1; i <= 44; i++) d.push(i.toString().padStart(2, '0'));
+  return shuffle(d);
+}
+function createSpecialDeck() {
+  const d = [];
+  for (let i = 1; i <= 10; i++) d.push(`glads/${i.toString().padStart(2, '0')}`);
+  return shuffle(d);
+}
 
-// init hexes
-(function(){
-  const totalH = DOT_COUNT*DOT_SIZE + (DOT_COUNT-1)*DOT_MARGIN;
-  const startY = (HEIGHT-totalH)/2;
+// Initialize dot positions
+function initDots() {
+  const dots = [];
+  const totalH = DOT_COUNT * DOT_SIZE + (DOT_COUNT - 1) * DOT_MARGIN;
+  const startY = (HEIGHT - totalH) / 2;
+  // Left column
+  for (let i = 0; i < DOT_COUNT; i++) {
+    dots.push({
+      x: DOT_LEFT_OFFSET,
+      y: startY + i * (DOT_SIZE + DOT_MARGIN)
+    });
+  }
+  // Right column
+  for (let i = 0; i < DOT_COUNT; i++) {
+    dots.push({
+      x: DOT_RIGHT_OFFSET,
+      y: startY + i * (DOT_SIZE + DOT_MARGIN)
+    });
+  }
+  return dots;
+}
+
+// Initialize hexagon positions and values
+function initHexes() {
+  const hexes = [];
+  const totalH = DOT_COUNT * DOT_SIZE + (DOT_COUNT - 1) * DOT_MARGIN;
+  const startY = (HEIGHT - totalH) / 2;
   const hexY   = startY - DOT_MARGIN - DOT_SIZE;
-  for (let i=0;i<HEX_COUNT;i++) hexPositions.push({x:DOT_LEFT_OFFSET,  y:hexY - i*(DOT_SIZE+DOT_MARGIN), value:20});
-  for (let i=0;i<HEX_COUNT;i++) hexPositions.push({x:DOT_RIGHT_OFFSET, y:hexY - i*(DOT_SIZE+DOT_MARGIN), value:20});
-})();
+  // Three hexes above left column
+  for (let i = 0; i < HEX_COUNT; i++) {
+    hexes.push({
+      x: DOT_LEFT_OFFSET,
+      y: hexY - i * (DOT_SIZE + DOT_MARGIN),
+      value: 20
+    });
+  }
+  // Three hexes above right column
+  for (let i = 0; i < HEX_COUNT; i++) {
+    hexes.push({
+      x: DOT_RIGHT_OFFSET,
+      y: hexY - i * (DOT_SIZE + DOT_MARGIN),
+      value: 20
+    });
+  }
+  return hexes;
+}
 
-// init squares (top & bottom rows)
-(function(){
-  const totalW = SQUARE_COUNT*DOT_SIZE + (SQUARE_COUNT-1)*SQUARE_MARGIN;
-  const startX = (WIDTH-totalW)/2;
+// Initialize square positions and values
+function initSquares() {
+  const squares = [];
+  const totalW = SQUARE_COUNT * DOT_SIZE + (SQUARE_COUNT - 1) * SQUARE_MARGIN;
+  const startX = (WIDTH - totalW) / 2;
   const topY   = DOT_MARGIN;
   const botY   = HEIGHT - DOT_MARGIN - DOT_SIZE;
-  for (let i=0;i<SQUARE_COUNT;i++) {
-    squarePositions.push({ x:startX + i*(DOT_SIZE+SQUARE_MARGIN), y:topY, value:6 });
+  // Top row
+  for (let i = 0; i < SQUARE_COUNT; i++) {
+    squares.push({
+      x: startX + i * (DOT_SIZE + SQUARE_MARGIN),
+      y: topY,
+      value: 6
+    });
   }
-  for (let i=0;i<SQUARE_COUNT;i++) {
-    squarePositions.push({ x:startX + i*(DOT_SIZE+SQUARE_MARGIN), y:botY, value:6 });
+  // Bottom row
+  for (let i = 0; i < SQUARE_COUNT; i++) {
+    squares.push({
+      x: startX + i * (DOT_SIZE + SQUARE_MARGIN),
+      y: botY,
+      value: 6
+    });
   }
-})();
+  return squares;
+}
+// ────────────────────────────────────────────────
 
 io.on('connection', socket => {
-  if (players.length < 2) {
-    players.push(socket.id);
-    hands[socket.id] = [];
-  } else {
-    socket.emit('room-full');
-    return;
-  }
+  let room, game;
 
-  // initial sync
-  socket.emit('player-number', players.length);
-  socket.emit('table-update',   table);
-  socket.emit('dots-update',    dotPositions);
-  socket.emit('hexes-update',   hexPositions);
-  socket.emit('squares-update', squarePositions);
+  // 1) Client joins a room
+  socket.on('join-room', roomId => {
+    room = roomId;
 
-  // draw/shuffle
-  socket.on('draw-card',         () => { if(deck.length){const c=deck.pop(); hands[socket.id].push(c); socket.emit('your-hand', hands[socket.id]); }});
-  socket.on('draw-special-card', () => { if(specialDeck.length){const c=specialDeck.pop(); hands[socket.id].push(c); socket.emit('your-hand', hands[socket.id]); }});
-  socket.on('shuffle-main-deck',    () => deck = shuffle(deck));
-  socket.on('shuffle-special-deck', () => specialDeck = shuffle(specialDeck));
+    // Create new game state if needed
+    if (!games[room]) {
+      games[room] = {
+        players: [],
+        hands: {},
+        table: [],
+        deck: createMainDeck(),
+        specialDeck: createSpecialDeck(),
+        dotPositions: initDots(),
+        hexPositions: initHexes(),
+        squarePositions: initSquares()
+      };
+    }
+    game = games[room];
 
-  // play & move cards
-  socket.on('play-card',       ({card,x,y}) => {
-    const i = hands[socket.id].indexOf(card);
-    if(i!==-1){ hands[socket.id].splice(i,1); socket.emit('your-hand', hands[socket.id]); }
-    table.push({card,x,y}); io.emit('table-update', table);
+    // Enforce two players max
+    if (game.players.length >= 2) {
+      return socket.emit('room-full');
+    }
+
+    // Join socket.io room
+    socket.join(room);
+    game.players.push(socket.id);
+    game.hands[socket.id] = [];
+
+    // Initial sync just to this client
+    socket.emit('joined',       game.players.length);
+    socket.emit('your-hand',    game.hands[socket.id]);
+    socket.emit('table-update', game.table);
+    socket.emit('dots-update',  game.dotPositions);
+    socket.emit('hexes-update', game.hexPositions);
+    socket.emit('squares-update', game.squarePositions);
   });
-  socket.on('move-table-card', ({index,x,y}) => {
-    if(table[index]){ table[index].x=x; table[index].y=y; io.emit('table-update', table); }
+
+  // 2) Draw / shuffle
+  socket.on('draw-card', () => {
+    if (!game || !game.deck.length) return;
+    const c = game.deck.pop();
+    game.hands[socket.id].push(c);
+    socket.emit('your-hand', game.hands[socket.id]);
+  });
+  socket.on('draw-special-card', () => {
+    if (!game || !game.specialDeck.length) return;
+    const c = game.specialDeck.pop();
+    game.hands[socket.id].push(c);
+    socket.emit('your-hand', game.hands[socket.id]);
+  });
+  socket.on('shuffle-main-deck',    () => { if (game) game.deck = shuffle(game.deck); });
+  socket.on('shuffle-special-deck', () => { if (game) game.specialDeck = shuffle(game.specialDeck); });
+
+  // 3) Play & move cards
+  socket.on('play-card', ({card, x, y}) => {
+    if (!game) return;
+    const idx = game.hands[socket.id].indexOf(card);
+    if (idx !== -1) game.hands[socket.id].splice(idx, 1);
+    game.table.push({card, x, y});
+    io.in(room).emit('table-update', game.table);
+    socket.emit('your-hand', game.hands[socket.id]);
   });
 
-  // return card from hand
+  socket.on('move-table-card', ({index, x, y}) => {
+    if (!game || !game.table[index]) return;
+    game.table[index].x = x;
+    game.table[index].y = y;
+    io.in(room).emit('table-update', game.table);
+  });
+
+  // 4) Return card from hand
   socket.on('return-card-from-hand', ({card}) => {
-    const h = hands[socket.id];
-    const idx = h.indexOf(card);
-    if(idx!==-1){
-      h.splice(idx,1);
-      socket.emit('your-hand',h);
-      if(card.startsWith('glads/')){
-        specialDeck.push(card);
-        specialDeck = shuffle(specialDeck);
-      } else {
-        deck.push(card);
-        deck = shuffle(deck);
-      }
-    }
+    if (!game) return;
+    const h = game.hands[socket.id];
+    const i = h.indexOf(card);
+    if (i === -1) return;
+    h.splice(i, 1);
+    socket.emit('your-hand', h);
+    const deckArr = card.startsWith('glads/') ? game.specialDeck : game.deck;
+    deckArr.push(card);
+    shuffle(deckArr);
   });
 
-  // return card from table
-  socket.on('return-card-from-table', ({index,card}) => {
-    if(table[index] && table[index].card===card){
-      table.splice(index,1);
-      io.emit('table-update', table);
-      if(card.startsWith('glads/')){
-        specialDeck.push(card);
-        specialDeck = shuffle(specialDeck);
-      } else {
-        deck.push(card);
-        deck = shuffle(deck);
-      }
-    }
+  // 5) Return card from table
+  socket.on('return-card-from-table', ({index, card}) => {
+    if (!game || !game.table[index] || game.table[index].card !== card) return;
+    game.table.splice(index, 1);
+    io.in(room).emit('table-update', game.table);
+    const deckArr = card.startsWith('glads/') ? game.specialDeck : game.deck;
+    deckArr.push(card);
+    shuffle(deckArr);
   });
 
-  // dot sync
-  socket.on('move-dot', ({index,x,y}) => {
-    if(dotPositions[index]){
-      dotPositions[index] = { x, y };
-      io.emit('dots-update', dotPositions);
-    }
+  // 6) Dot sync
+  socket.on('move-dot', ({index, x, y}) => {
+    if (!game || !game.dotPositions[index]) return;
+    game.dotPositions[index] = {x, y};
+    io.in(room).emit('dots-update', game.dotPositions);
   });
 
-  // hex sync
-  socket.on('move-hex',    ({index,x,y}) => {
-    if(hexPositions[index]){
-      hexPositions[index].x=x; hexPositions[index].y=y;
-      io.emit('hexes-update', hexPositions);
-    }
+  // 7) Hex sync
+  socket.on('move-hex', ({index, x, y}) => {
+    if (!game || !game.hexPositions[index]) return;
+    game.hexPositions[index].x = x;
+    game.hexPositions[index].y = y;
+    io.in(room).emit('hexes-update', game.hexPositions);
   });
-  socket.on('update-hex',  ({index,value}) => {
-    if(hexPositions[index]){
-      hexPositions[index].value=value;
-      io.emit('hexes-update', hexPositions);
-    }
-  });
-
-  // square sync
-  socket.on('move-square',   ({index,x,y}) => {
-    if(squarePositions[index]){
-      squarePositions[index].x=x; squarePositions[index].y=y;
-      io.emit('squares-update', squarePositions);
-    }
-  });
-  socket.on('update-square', ({index,value}) => {
-    if(squarePositions[index]){
-      squarePositions[index].value=value;
-      io.emit('squares-update', squarePositions);
-    }
+  socket.on('update-hex', ({index, value}) => {
+    if (!game || !game.hexPositions[index]) return;
+    game.hexPositions[index].value = value;
+    io.in(room).emit('hexes-update', game.hexPositions);
   });
 
+  // 8) Square sync
+  socket.on('move-square', ({index, x, y}) => {
+    if (!game || !game.squarePositions[index]) return;
+    game.squarePositions[index].x = x;
+    game.squarePositions[index].y = y;
+    io.in(room).emit('squares-update', game.squarePositions);
+  });
+  socket.on('update-square', ({index, value}) => {
+    if (!game || !game.squarePositions[index]) return;
+    game.squarePositions[index].value = value;
+    io.in(room).emit('squares-update', game.squarePositions);
+  });
+
+  // 9) Cleanup on disconnect
   socket.on('disconnect', () => {
-    players = players.filter(id => id!==socket.id);
-    delete hands[socket.id];
+    if (!game) return;
+    game.players = game.players.filter(id => id !== socket.id);
+    delete game.hands[socket.id];
+    socket.leave(room);
+    // remove empty games to free memory
+    if (game.players.length === 0) {
+      delete games[room];
+    }
   });
 });
 

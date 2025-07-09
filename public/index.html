@@ -46,6 +46,18 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    // Pick or prompt for a room code, expose to client.js
+    const params = new URLSearchParams(location.search);
+    let ROOM = params.get('room');
+    if (!ROOM) {
+      ROOM = prompt('Enter game code:','') || 'lobby';
+      location.search = '?room=' + encodeURIComponent(ROOM);
+    }
+    window.GAME_ROOM = ROOM;
+  </script>
+  
   <script src="client.js"></script>
 </body>
 </html>

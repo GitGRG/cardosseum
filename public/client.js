@@ -1,6 +1,8 @@
 // public/client.js
 const socket = io();
 
+socket.emit('join-room', window.GAME_ROOM);
+
 let hand = [];
 let tableCards = [];
 let dotPositions = [];
@@ -68,13 +70,14 @@ socket.on('table-update',   cards    => { tableCards = cards.slice(); renderTabl
 socket.on('dots-update',    pos      => { dotPositions = pos.slice(); renderTable(); });
 socket.on('hexes-update',   pos      => { hexPositions = pos.slice(); renderTable(); });
 socket.on('squares-update', pos      => { squarePositions = pos.slice(); renderTable(); });
-socket.on('player-number',  num      => {
+socket.on('joined', num => {
+  // num === 1 or 2 in this room
   if (num === 2) {
     const board    = document.getElementById('game-board');
     const handEl   = document.getElementById('player1-hand');
-    const mid      = document.getElementById('middle-area');
+    const middleEl = document.getElementById('middle-area');
     board.removeChild(handEl);
-    board.insertBefore(handEl, mid);
+    board.insertBefore(handEl, middleEl);
   }
 });
 
