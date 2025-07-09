@@ -1,6 +1,7 @@
 // public/client.js
 const socket = io();
 
+// join our ROOM
 socket.emit('join-room', window.GAME_ROOM);
 
 let hand = [];
@@ -218,10 +219,11 @@ function renderTable() {
 }
 
 function attachControlBehavior(el, idx, type, min, max) {
+  // Drag-to-move (unchanged)
   el.addEventListener('mousedown', dn => {
     dn.preventDefault();
     const sX = dn.clientX, sY = dn.clientY;
-    const arr = type==='hex' ? hexPositions : squarePositions;
+    const arr = type === 'hex' ? hexPositions : squarePositions;
     const oX = arr[idx].x, oY = arr[idx].y;
     function onDrag(mv) {
       el.style.left = `${oX + (mv.clientX - sX)}px`;
@@ -240,6 +242,7 @@ function attachControlBehavior(el, idx, type, min, max) {
     document.addEventListener('mouseup',   onDrop);
   });
 
+  // Single-click → manual edit (unchanged)
   el.addEventListener('click', ev => {
     ev.stopPropagation();
     showInputOverlay(el.textContent, n => {
@@ -247,30 +250,46 @@ function attachControlBehavior(el, idx, type, min, max) {
     }, min, max);
   });
 
+  // Right-click → show 0 for 2s, then emit random result
   el.addEventListener('contextmenu', ev => {
     ev.preventDefault();
-    const n = Math.floor(Math.random() * (max - min + 1)) + min;
-    socket.emit(`update-${type}`, { index: idx, value: n });
+    const result = Math.floor(Math.random() * (max - min + 1)) + min;
+    // display 0 immediately
+    el.textContent = '0';
+    // after 2 seconds, send true value
+    setTimeout(() => {
+      socket.emit(`update-${type}`, { index: idx, value: result });
+    }, 2000);
   });
 }
 
 function showInputOverlay(initial, onCommit, min, max) {
   const overlay = document.createElement('div');
   Object.assign(overlay.style, {
-    position:'fixed', top:0, left:0,
-    width:'100vw', height:'100vh',
-    background:'rgba(0,0,0,0.7)',
-    display:'flex', justifyContent:'center', alignItems:'center',
-    zIndex:2000
+    position: 'fixed',
+    top: 0, left: 0,
+    width: '100vw',
+    height: '100vh',
+    background: 'rgba(0,0,0,0.7)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2000
   });
   const input = document.createElement('input');
   input.type = 'number';
-  input.min  = min; input.max = max;
+  input.min  = min;
+  input.max  = max;
   input.value = initial;
   Object.assign(input.style, {
-    fontSize:'24px', width:'80px', textAlign:'center',
-    padding:'8px', background:'rgba(0,0,0,0.5)', color:'white',
-    border:'none', outline:'2px solid #888'
+    fontSize: '24px',
+    width: '80px',
+    textAlign: 'center',
+    padding: '8px',
+    background: 'rgba(0,0,0,0.5)',
+    color: 'white',
+    border: 'none',
+    outline: '2px solid #888'
   });
   overlay.appendChild(input);
   document.body.appendChild(overlay);
@@ -278,17 +297,20 @@ function showInputOverlay(initial, onCommit, min, max) {
   input.select();
 
   function commit() {
-    let n = parseInt(input.value,10);
-    if (isNaN(n) || n<min || n>max) n = initial;
+    let n = parseInt(input.value, 10);
+    if (isNaN(n) || n < min || n > max) n = initial;
     onCommit(n);
     document.body.removeChild(overlay);
   }
   input.addEventListener('keydown', e => {
-    if (e.key==='Enter') { e.preventDefault(); commit(); }
-    if (e.key==='Escape') document.body.removeChild(overlay);
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    }
+    if (e.key === 'Escape') document.body.removeChild(overlay);
   });
   overlay.addEventListener('click', e => {
-    if (e.target===overlay) commit();
+    if (e.target === overlay) commit();
   });
 }
 
@@ -297,11 +319,16 @@ function showCardOverlay(src) {
   const overlay = document.createElement('div');
   overlay.id = 'card-overlay';
   Object.assign(overlay.style, {
-    position:'fixed', top:0, left:0,
-    width:'100vw', height:'100vh',
-    background:'rgba(0,0,0,0.85)',
-    display:'flex', justifyContent:'center', alignItems:'center',
-    zIndex:3000, cursor:'pointer'
+    position: 'fixed',
+    top: 0, left: 0,
+    width: '100vw',
+    height: '100vh',
+    background: 'rgba(0,0,0,0.85)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 3000,
+    cursor: 'pointer'
   });
   const img = document.createElement('img');
   img.src = src;
@@ -314,8 +341,8 @@ function showCardOverlay(src) {
 
 function playCard(card, x, y) {
   const i = hand.indexOf(card);
-  if (i!==-1) {
-    hand.splice(i,1);
+  if (i !== -1) {
+    hand.splice(i, 1);
     renderHand();
   }
   socket.emit('play-card', { card, x, y });
