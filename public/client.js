@@ -9,6 +9,7 @@ let tableCards = [];
 let dotPositions = [];
 let hexPositions = [];
 let squarePositions = [];
+let opponentCount = 0; // track the other player's hand size
 
 const cardBaseUrl = 'https://geremygeorge.com/cardosseum/';
 const playArea    = document.getElementById('play-area');
@@ -28,6 +29,23 @@ const HEX_PER_COLUMN    = 3;
 const SQUARE_COUNT      = 12;
 const SQUARE_MARGIN     = 10;
 
+// listen for updated hand counts from server
+socket.on('hand-counts', counts => {
+  counts.forEach(c => {
+    if (c.id !== socket.id) {
+      opponentCount = c.count;
+    }
+  });
+  updateOpponentDisplay();
+});
+
+function updateOpponentDisplay() {
+  const el = document.getElementById('opponent-count');
+  if (el) {
+    el.textContent = `Opponent: ${opponentCount} cards`;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   // STARTUP OVERLAY
   const startupOverlay = document.getElementById('startup-overlay');
@@ -41,37 +59,75 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // DRAW & SHUFFLE
-  mainPile.addEventListener('click',     () => socket.emit('draw-card'));
+  mainPile.addEventListener('click', () => socket.emit('draw-card'));
   mainPile.addEventListener('contextmenu', e => {
     e.preventDefault();
     socket.emit('shuffle-main-deck');
   });
-  specialPile.addEventListener('click',     () => socket.emit('draw-special-card'));
+  specialPile.addEventListener('click', () => socket.emit('draw-special-card'));
   specialPile.addEventListener('contextmenu', e => {
     e.preventDefault();
     socket.emit('shuffle-special-deck');
   });
 
-  // DROP HAND CARDS
+  // DROP HAND CARDS → play area
   playArea.addEventListener('dragover', e => e.preventDefault());
   playArea.addEventListener('drop', e => {
     e.preventDefault();
+    // ignore drags coming from table cards
+    if (e.dataTransfer.types.includes('application/json')) return;
     const r = playArea.getBoundingClientRect();
-    // subtract half of card dimensions to center it
-    const x = e.clientX - r.left - CARD_HALF;
-    const y = e.clientY - r.top  - CARD_HALF;
     const c = e.dataTransfer.getData('text/plain');
-    if (c) playCard(c, x, y);
+    if (c) {
+      const x = e.clientX - r.left - CARD_HALF;
+      const y = e.clientY - r.top  - CARD_HALF;
+      playCard(c, x, y);
+    }
   });
+
+  // DROP TABLE CARDS → back into hand
+  const handEl = document.getElementById('player1-hand');
+  handEl.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+  handEl.addEventListener('drop', e => {
+    e.preventDefault();
+    const data = e.dataTransfer.getData('application/json');
+    if (!data) return;
+    const { from, index, card } = JSON.parse(data);
+    if (from === 'table') {
+      socket.emit('return-card-from-table-to-hand', { index, card });
+    }
+  });
+
+  // Opponent count: centered just above bottom squares
+  const oppEl = document.createElement('div');
+  oppEl.id = 'opponent-count';
+  Object.assign(oppEl.style, {
+    position:   'absolute',
+    // DOT_SIZE + SQUARE_MARGIN positions it right above the bottom row
+    bottom:     `${DOT_SIZE + SQUARE_MARGIN + 5}px`,
+    left:       '50%',
+    transform:  'translateX(-50%)',
+    color:      'white',
+    fontSize:   '14px',
+    background: 'rgba(0,0,0,0.5)',
+    padding:    '2px 6px',
+    borderRadius: '4px',
+    zIndex:     '1001'
+  });
+  playArea.appendChild(oppEl);
+  updateOpponentDisplay();
 });
 
 // SOCKET EVENTS
-socket.on('room-full',      () => alert('Room is full'));
-socket.on('your-hand',      cards    => { hand = cards.slice(); renderHand(); });
-socket.on('table-update',   cards    => { tableCards = cards.slice(); renderTable(); });
-socket.on('dots-update',    pos      => { dotPositions = pos.slice(); renderTable(); });
-socket.on('hexes-update',   pos      => { hexPositions = pos.slice(); renderTable(); });
-socket.on('squares-update', pos      => { squarePositions = pos.slice(); renderTable(); });
+socket.on('room-full',    () => alert('Room is full'));
+socket.on('your-hand',    cards => { hand = cards.slice(); renderHand(); });
+socket.on('table-update', cards => { tableCards = cards.slice(); renderTable(); });
+socket.on('dots-update',  pos   => { dotPositions = pos.slice(); renderTable(); });
+socket.on('hexes-update', pos   => { hexPositions = pos.slice(); renderTable(); });
+socket.on('squares-update', pos => { squarePositions = pos.slice(); renderTable(); });
 socket.on('joined', num => {
   // num === 1 or 2 in this room
   if (num === 2) {
@@ -123,21 +179,29 @@ function renderTable() {
       width:${CARD_WIDTH}px;
       cursor:grab;
     `;
-    img.ondragstart = () => false;
 
-    img.addEventListener('click', () =>
-      showCardOverlay(img.src)
-    );
-    img.addEventListener('contextmenu', ev => {
-      ev.preventDefault();
-      socket.emit('return-card-from-table', { index: i, card: e.card });
+    // enable dragging back to hand
+    img.draggable = true;
+    img.addEventListener('dragstart', ev => {
+      ev.dataTransfer.setData(
+        'application/json',
+        JSON.stringify({ from: 'table', index: i, card: e.card })
+      );
+      ev.dataTransfer.effectAllowed = 'move';
     });
 
+    // track whether this mouse session became a drag
+    let isDragging = false;
+
+    // a) Drag‑to‑move handler
     img.addEventListener('mousedown', dn => {
       dn.preventDefault();
+      isDragging = false;
       const sX = dn.clientX, sY = dn.clientY;
       const oX = e.x, oY = e.y;
+
       function onMove(mv) {
+        isDragging = true;
         img.style.left = `${oX + (mv.clientX - sX)}px`;
         img.style.top  = `${oY + (mv.clientY - sY)}px`;
       }
@@ -150,8 +214,22 @@ function renderTable() {
           y: parseInt(img.style.top,10)
         });
       }
+
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup',   onUp);
+    });
+
+    // b) Click handler — only fire overlay if not dragged
+    img.addEventListener('click', ev => {
+      ev.stopPropagation();
+      if (!isDragging) {
+        showCardOverlay(img.src);
+      }
+    });
+
+    img.addEventListener('contextmenu', ev => {
+      ev.preventDefault();
+      socket.emit('return-card-from-table', { index: i, card: e.card });
     });
 
     playArea.appendChild(img);
@@ -220,47 +298,84 @@ function renderTable() {
 }
 
 function attachControlBehavior(el, idx, type, min, max) {
-  // Drag-to-move (unchanged)
+  // Track if the user has moved the element during mouse down
+  let isDragging = false;
+
+  // 1) Drag‑to‑move
   el.addEventListener('mousedown', dn => {
     dn.preventDefault();
+    isDragging = false;
+
     const sX = dn.clientX, sY = dn.clientY;
     const arr = type === 'hex' ? hexPositions : squarePositions;
-    const oX = arr[idx].x, oY = arr[idx].y;
-    function onDrag(mv) {
+    const oX  = arr[idx].x, oY = arr[idx].y;
+
+    function onMove(mv) {
+      isDragging = true;
       el.style.left = `${oX + (mv.clientX - sX)}px`;
       el.style.top  = `${oY + (mv.clientY - sY)}px`;
     }
-    function onDrop() {
-      document.removeEventListener('mousemove', onDrag);
-      document.removeEventListener('mouseup',   onDrop);
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
       socket.emit(`move-${type}`, {
         index: idx,
         x: parseInt(el.style.left,10),
         y: parseInt(el.style.top,10)
       });
     }
-    document.addEventListener('mousemove', onDrag);
-    document.addEventListener('mouseup',   onDrop);
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
   });
 
-  // Single-click → manual edit (unchanged)
+  // 2) Click → only open input if NOT dragging
   el.addEventListener('click', ev => {
     ev.stopPropagation();
-    showInputOverlay(el.textContent, n => {
-      socket.emit(`update-${type}`, { index: idx, value: n });
-    }, min, max);
+    if (!isDragging) {
+      showInputOverlay(el.textContent, n => {
+        socket.emit(`update-${type}`, { index: idx, value: n });
+      }, min, max);
+    }
   });
 
-  // Right-click → show 0 for 2s, then emit random result
+  // 3) Right‑click roll behavior
+  const HOLD_DURATION_MS = 2000;
   el.addEventListener('contextmenu', ev => {
     ev.preventDefault();
+    ev.stopImmediatePropagation();
+
     const result = Math.floor(Math.random() * (max - min + 1)) + min;
-    // display 0 immediately
     el.textContent = '0';
-    // after 2 seconds, send true value
+
+    const label = document.createElement('div');
+    label.textContent = '-0-';
+    Object.assign(label.style, {
+      position:      'absolute',
+      color:         'green',
+      fontSize:      '10px',
+      fontWeight:    'bold',
+      whiteSpace:    'nowrap',
+      pointerEvents: 'none',
+      zIndex:        '999'
+    });
+
+    const x = el.offsetLeft + el.offsetWidth / 2;
+    const y = el.offsetTop  - 12;
+    label.style.left      = `${x}px`;
+    label.style.top       = `${y}px`;
+    label.style.transform = 'translateX(-50%)';
+
+    playArea.appendChild(label);
+
     setTimeout(() => {
-      socket.emit(`update-${type}`, { index: idx, value: result });
-    }, 2000);
+      label.remove();
+      el.textContent = result;
+      socket.emit(`update-${type}`, {
+        index: idx,
+        value: result
+      });
+    }, HOLD_DURATION_MS);
   });
 }
 
@@ -348,5 +463,3 @@ function playCard(card, x, y) {
   }
   socket.emit('play-card', { card, x, y });
 }
-
-
