@@ -145,24 +145,57 @@ document.addEventListener('DOMContentLoaded', () => {
   trashEl.textContent = '🗑️';
   playArea.appendChild(trashEl);
 
-  // allow drops onto trash can (mouse)
+  // ─── TRASH-CAN DRAG/DROP ─────────────────────
   trashEl.addEventListener('dragover', e => e.preventDefault());
   trashEl.addEventListener('drop', e => {
     e.preventDefault();
-    if (e.dataTransfer.types.includes('application/json')) {
-      // from table
-      const { index, card } = JSON.parse(e.dataTransfer.getData('application/json'));
+    const json = e.dataTransfer.getData('application/json');
+    if (json) {
+      const { index, card } = JSON.parse(json);
       socket.emit('return-card-from-table', { index, card });
     } else {
-      // from hand
       const card = e.dataTransfer.getData('text/plain');
       socket.emit('return-card-from-hand', { card });
     }
-    // shuffle both decks
     socket.emit('shuffle-main-deck');
     socket.emit('shuffle-special-deck');
   });
-});
+
+  // ─── GLOBAL TRASH WATCHER (one removal per tick) ────────────────────
+  setInterval(() => {
+    const trashRect = trashEl.getBoundingClientRect();
+    const cards     = document.querySelectorAll('.card');
+
+    for (const el of cards) {
+      const rect = el.getBoundingClientRect();
+
+      if (
+        rect.left   < trashRect.right  &&
+        rect.right  > trashRect.left   &&
+        rect.top    < trashRect.bottom &&
+        rect.bottom > trashRect.top
+      ) {
+        const isHand    = el.classList.contains('hand-card');
+        const cardValue = el.dataset.card;
+        const idx       = parseInt(el.dataset.idx, 10);
+
+        el.remove();
+
+        if (isHand) {
+          socket.emit('return-card-from-hand',  { card: cardValue });
+        } else {
+          socket.emit('return-card-from-table', { index: idx, card: cardValue });
+        }
+
+        socket.emit('shuffle-main-deck');
+        socket.emit('shuffle-special-deck');
+
+        break;
+      }
+    }
+  }, 150);
+
+}); // end DOMContentLoaded
 
 // SOCKET EVENTS
 socket.on('room-full',       () => alert('Room is full'));
@@ -191,6 +224,10 @@ function renderHand() {
     img.draggable = true;
     img.style.cursor = 'grab';
 
+    // TAG FOR GLOBAL WATCHER
+    img.classList.add('card', 'hand-card');
+    img.dataset.card = c;
+
     // Mouse controls
     img.addEventListener('dragstart', e =>
       e.dataTransfer.setData('text/plain', c)
@@ -205,7 +242,7 @@ function renderHand() {
       socket.emit('shuffle-special-deck');
     });
 
-    // Touch‑drag from hand → play‑area OR trash
+    // Touch-drag from hand → play-area OR trash
     img.addEventListener('touchstart', ts => {
       ts.preventDefault();
       const touch = ts.touches[0];
@@ -238,7 +275,6 @@ function renderHand() {
           up.clientX >= rTrash.left && up.clientX <= rTrash.right &&
           up.clientY >= rTrash.top  && up.clientY <= rTrash.bottom
         ) {
-          // dropped on trash
           socket.emit('return-card-from-hand', { card: c });
           socket.emit('shuffle-main-deck');
           socket.emit('shuffle-special-deck');
@@ -246,7 +282,6 @@ function renderHand() {
           up.clientX >= rPlay.left && up.clientX <= rPlay.right &&
           up.clientY >= rPlay.top  && up.clientY <= rPlay.bottom
         ) {
-          // dropped on play area
           const px = up.clientX - rPlay.left - CARD_HALF;
           const py = up.clientY - rPlay.top  - CARD_HALF;
           playCard(c, px, py);
@@ -268,8 +303,13 @@ function renderTable() {
   // 1) Placed cards
   tableCards.forEach((e, i) => {
     const img = document.createElement('img');
+
+    // TAG FOR GLOBAL WATCHER
+    img.classList.add('card', 'table-card');
+    img.dataset.card = e.card;
+    img.dataset.idx  = i;
+
     img.src       = `${cardBaseUrl}${e.card}.png`;
-    img.className = 'table-card';
     img.style.cssText = `
       position:absolute;
       left:${e.x}px;
@@ -288,7 +328,7 @@ function renderTable() {
       ev.dataTransfer.effectAllowed = 'move';
     });
 
-    // Mouse‑drag to move
+    // Mouse-drag to move
     let isDragging = false;
     img.addEventListener('mousedown', dn => {
       dn.preventDefault();
@@ -313,7 +353,7 @@ function renderTable() {
       document.addEventListener('mouseup',   onUp);
     });
 
-    // Touch‑drag / discard
+    // Touch-drag / discard
     img.addEventListener('touchstart', tn => {
       tn.preventDefault();
       let dragging = false;
@@ -338,7 +378,6 @@ function renderTable() {
           up.clientX >= rTrash.left && up.clientX <= rTrash.right &&
           up.clientY >= rTrash.top  && up.clientY <= rTrash.bottom
         ) {
-          // discard
           socket.emit('return-card-from-table', { index: i, card: e.card });
           socket.emit('shuffle-main-deck');
           socket.emit('shuffle-special-deck');
@@ -362,7 +401,7 @@ function renderTable() {
       if (!isDragging) showCardOverlay(img.src);
     });
 
-    // Right‑click return
+    // Right-click return
     img.addEventListener('contextmenu', ev => {
       ev.preventDefault();
       socket.emit('return-card-from-table', { index: i, card: e.card });
@@ -381,7 +420,7 @@ function renderTable() {
     dot.style.top     = `${p.y}px`;
     dot.dataset.index = i;
 
-    // Mouse‑drag
+    // Mouse-drag
     dot.addEventListener('mousedown', dn => {
       dn.preventDefault();
       const sX = dn.clientX, sY = dn.clientY;
@@ -403,7 +442,7 @@ function renderTable() {
       document.addEventListener('mouseup',   onDrop);
     });
 
-    // Touch‑drag
+    // Touch-drag
     dot.addEventListener('touchstart', ts => {
       ts.preventDefault();
       const t0 = ts.touches[0];
@@ -461,7 +500,7 @@ function renderTable() {
   });
   playArea.appendChild(help);
 
-  // Re‑append persistent UI so they stay on top
+  // Re-append persistent UI so they stay on top
   playArea.appendChild(trashEl);
   playArea.appendChild(oppEl);
 }
@@ -484,7 +523,7 @@ function attachControlBehavior(el, idx, type, min, max) {
       pointerEvents: 'none',
       zIndex:        '999'
     });
-    const x = el.offsetLeft + el.offsetWidth / 2;
+    const x = el.offsetLeft +	el.offsetWidth / 2;
     const y = el.offsetTop  - 12;
     label.style.left      = `${x}px`;
     label.style.top       = `${y}px`;
@@ -497,27 +536,46 @@ function attachControlBehavior(el, idx, type, min, max) {
     }, 500);
   }
 
-  // MOUSE: drag to move
+  // MOUSE: drag to move (with trash-can drop)
   el.addEventListener('mousedown', dn => {
     dn.preventDefault();
     isDragging = false;
-    startX = dn.clientX; startY = dn.clientY;
+    startX = dn.clientX;
+    startY = dn.clientY;
     const arr = type === 'hex' ? hexPositions : squarePositions;
-    origX = arr[idx].x; origY = arr[idx].y;
+    origX = arr[idx].x;
+    origY = arr[idx].y;
+
     function onMove(mv) {
       isDragging = true;
       el.style.left = `${origX + (mv.clientX - startX)}px`;
       el.style.top  = `${origY + (mv.clientY - startY)}px`;
     }
-    function onUp() {
+
+    function onUp(upEvent) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup',   onUp);
-      socket.emit(`move-${type}`, {
-        index: idx,
-        x: parseInt(el.style.left,10),
-        y: parseInt(el.style.top,10)
-      });
+
+      const trashRect = trashEl.getBoundingClientRect();
+      const x = upEvent.clientX;
+      const y = upEvent.clientY;
+
+      if (
+        x >= trashRect.left  && x <= trashRect.right &&
+        y >= trashRect.top   && y <= trashRect.bottom
+      ) {
+        socket.emit(`return-${type}`, { index: idx });
+        socket.emit('shuffle-main-deck');
+        socket.emit('shuffle-special-deck');
+      } else {
+        socket.emit(`move-${type}`, {
+          index: idx,
+          x: parseInt(el.style.left,  10),
+          y: parseInt(el.style.top,   10)
+        });
+      }
     }
+
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup',   onUp);
   });
