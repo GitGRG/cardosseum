@@ -42,7 +42,7 @@ socket.on('hand-counts', counts => {
 function updateOpponentDisplay() {
   const el = document.getElementById('opponent-count');
   if (el) {
-    el.textContent = `Opponent: ${opponentCount} cards`;
+    el.textContent = `OPPONENT HAND = ${opponentCount}`;
   }
 }
 
@@ -101,21 +101,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Opponent count: centered just above bottom squares
+  
+  // Opponent count: bottom‐left, just above the help button
   const oppEl = document.createElement('div');
   oppEl.id = 'opponent-count';
   Object.assign(oppEl.style, {
-    position:   'absolute',
-    // DOT_SIZE + SQUARE_MARGIN positions it right above the bottom row
-    bottom:     `${DOT_SIZE + SQUARE_MARGIN + 5}px`,
-    left:       '50%',
-    transform:  'translateX(-50%)',
-    color:      'white',
-    fontSize:   '14px',
-    background: 'rgba(0,0,0,0.5)',
-    padding:    '2px 6px',
-    borderRadius: '4px',
-    zIndex:     '1001'
+    position:    'absolute',
+    bottom:      '30px',   // sits just above the help button (help is at bottom:5px + 20px height)
+    left:        '5px',
+    color:       'white',
+    fontSize:    '10px',
+    background:  'rgba(0,0,0,0.5)',
+    padding:     '2px 6px',
+    borderRadius:'4px',
+    zIndex:      '1001',
+    whiteSpace:  'nowrap'
   });
   playArea.appendChild(oppEl);
   updateOpponentDisplay();
@@ -287,6 +287,9 @@ function renderTable() {
     playArea.appendChild(el);
   });
 
+
+  
+
   // 5) Help button
   const help = document.createElement('div');
   help.id = 'help-button';
@@ -295,7 +298,31 @@ function renderTable() {
     document.getElementById('startup-overlay').style.display = 'flex';
   });
   playArea.appendChild(help);
-}
+    // ————————————————
+    // Opponent cards count
+    let opp = document.getElementById('opponent-count');
+    if (!opp) {
+      opp = document.createElement('div');
+      opp.id = 'opponent-count';
+      Object.assign(opp.style, {
+        position:   'absolute',
+        bottom:     '30px',    // just above the “?” help button (5px + 20px + 5px gap)
+        left:       '5px',
+        color:      'white',
+        fontSize:   '14px',
+        background: 'rgba(0,0,0,0.5)',
+        padding:    '2px 6px',
+        borderRadius:'4px',
+        zIndex:     '1001',
+        whiteSpace: 'nowrap'
+      });
+      playArea.appendChild(opp);
+    }
+    // update its text each render
+    opp.textContent = `OPPONENT HAND = ${opponentCount}`;
+  }
+
+
 
 function attachControlBehavior(el, idx, type, min, max) {
   // Track if the user has moved the element during mouse down
