@@ -10,11 +10,6 @@ app.use(express.static('public'));
 // ─── Room management ─────────────────────────
 const games = {}; // roomId → game state
 
-
-// index.js, somewhere near the top:
-
-// … after const games = {} …
-
 // expose a webpage listing all active rooms
 app.get('/rooms', (req, res) => {
   let html = `
@@ -53,7 +48,6 @@ app.get('/rooms', (req, res) => {
   `;
   res.send(html);
 });
-
 
 // Layout constants (must match your client CSS)
 const WIDTH            = 500;
@@ -95,17 +89,11 @@ function initDots() {
   const startY = (HEIGHT - totalH) / 2;
   // Left column
   for (let i = 0; i < DOT_COUNT; i++) {
-    dots.push({
-      x: DOT_LEFT_OFFSET,
-      y: startY + i * (DOT_SIZE + DOT_MARGIN)
-    });
+    dots.push({ x: DOT_LEFT_OFFSET, y: startY + i * (DOT_SIZE + DOT_MARGIN) });
   }
   // Right column
   for (let i = 0; i < DOT_COUNT; i++) {
-    dots.push({
-      x: DOT_RIGHT_OFFSET,
-      y: startY + i * (DOT_SIZE + DOT_MARGIN)
-    });
+    dots.push({ x: DOT_RIGHT_OFFSET, y: startY + i * (DOT_SIZE + DOT_MARGIN) });
   }
   return dots;
 }
@@ -118,19 +106,11 @@ function initHexes() {
   const hexY   = startY - DOT_MARGIN - DOT_SIZE;
   // Three hexes above left column
   for (let i = 0; i < HEX_COUNT; i++) {
-    hexes.push({
-      x: DOT_LEFT_OFFSET,
-      y: hexY - i * (DOT_SIZE + DOT_MARGIN),
-      value: 20
-    });
+    hexes.push({ x: DOT_LEFT_OFFSET, y: hexY - i * (DOT_SIZE + DOT_MARGIN), value: 20 });
   }
   // Three hexes above right column
   for (let i = 0; i < HEX_COUNT; i++) {
-    hexes.push({
-      x: DOT_RIGHT_OFFSET,
-      y: hexY - i * (DOT_SIZE + DOT_MARGIN),
-      value: 20
-    });
+    hexes.push({ x: DOT_RIGHT_OFFSET, y: hexY - i * (DOT_SIZE + DOT_MARGIN), value: 20 });
   }
   return hexes;
 }
@@ -144,19 +124,11 @@ function initSquares() {
   const botY   = HEIGHT - DOT_MARGIN - DOT_SIZE;
   // Top row
   for (let i = 0; i < SQUARE_COUNT; i++) {
-    squares.push({
-      x: startX + i * (DOT_SIZE + SQUARE_MARGIN),
-      y: topY,
-      value: 6
-    });
+    squares.push({ x: startX + i * (DOT_SIZE + SQUARE_MARGIN), y: topY, value: 6 });
   }
   // Bottom row
   for (let i = 0; i < SQUARE_COUNT; i++) {
-    squares.push({
-      x: startX + i * (DOT_SIZE + SQUARE_MARGIN),
-      y: botY,
-      value: 6
-    });
+    squares.push({ x: startX + i * (DOT_SIZE + SQUARE_MARGIN), y: botY, value: 6 });
   }
   return squares;
 }
@@ -164,6 +136,16 @@ function initSquares() {
 
 io.on('connection', socket => {
   let room, game;
+
+  // helper to broadcast hand counts
+  function broadcastHandCounts() {
+    if (!game) return;
+    const counts = game.players.map(id => ({
+      id,
+      count: (game.hands[id] || []).length
+    }));
+    io.in(room).emit('hand-counts', counts);
+  }
 
   // 1) Client joins a room
   socket.on('join-room', roomId => {
@@ -201,6 +183,9 @@ io.on('connection', socket => {
     socket.emit('dots-update',  game.dotPositions);
     socket.emit('hexes-update', game.hexPositions);
     socket.emit('squares-update', game.squarePositions);
+
+    // broadcast updated counts
+    broadcastHandCounts();
   });
 
   // 2) Draw / shuffle
@@ -209,12 +194,14 @@ io.on('connection', socket => {
     const c = game.deck.pop();
     game.hands[socket.id].push(c);
     socket.emit('your-hand', game.hands[socket.id]);
+    broadcastHandCounts();
   });
   socket.on('draw-special-card', () => {
     if (!game || !game.specialDeck.length) return;
     const c = game.specialDeck.pop();
     game.hands[socket.id].push(c);
     socket.emit('your-hand', game.hands[socket.id]);
+    broadcastHandCounts();
   });
   socket.on('shuffle-main-deck',    () => { if (game) game.deck = shuffle(game.deck); });
   socket.on('shuffle-special-deck', () => { if (game) game.specialDeck = shuffle(game.specialDeck); });
@@ -227,6 +214,7 @@ io.on('connection', socket => {
     game.table.push({card, x, y});
     io.in(room).emit('table-update', game.table);
     socket.emit('your-hand', game.hands[socket.id]);
+    broadcastHandCounts();
   });
 
   socket.on('move-table-card', ({index, x, y}) => {
@@ -244,6 +232,7 @@ io.on('connection', socket => {
     if (i === -1) return;
     h.splice(i, 1);
     socket.emit('your-hand', h);
+    broadcastHandCounts();
     const deckArr = card.startsWith('glads/') ? game.specialDeck : game.deck;
     deckArr.push(card);
     shuffle(deckArr);
@@ -254,6 +243,7 @@ io.on('connection', socket => {
     if (!game || !game.table[index] || game.table[index].card !== card) return;
     game.table.splice(index, 1);
     io.in(room).emit('table-update', game.table);
+    broadcastHandCounts();
     const deckArr = card.startsWith('glads/') ? game.specialDeck : game.deck;
     deckArr.push(card);
     shuffle(deckArr);
@@ -298,10 +288,8 @@ io.on('connection', socket => {
     game.players = game.players.filter(id => id !== socket.id);
     delete game.hands[socket.id];
     socket.leave(room);
-    // remove empty games to free memory
-    if (game.players.length === 0) {
-      delete games[room];
-    }
+    broadcastHandCounts();
+    if (game.players.length === 0) delete games[room];
   });
 });
 
