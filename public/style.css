@@ -206,3 +206,7 @@ body {
   z-index: 1001;
   user-select: none;
 }
+
+#play-area {
+  position: relative;
+}

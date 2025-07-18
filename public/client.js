@@ -13,9 +13,8 @@ let opponentCount = 0; // track the other player's hand size
 
 // persistent UI elements
 let oppEl = null;
-let trashEl = null;
 
-const cardBaseUrl = 'https://geremygeorge.com/cardosseum/';
+const cardBaseUrl = 'https://www.timeloopinteractive.com/cardosseum/';
 const playArea    = document.getElementById('play-area');
 const mainPile    = document.getElementById('draw-pile');
 const specialPile = document.getElementById('draw-pile-2');
@@ -34,6 +33,7 @@ const SQUARE_COUNT       = 12;
 const SQUARE_MARGIN      = 10;
 
 const HOLD_DURATION_MS   = 2000;
+const CARD_LONG_PRESS_MS = 1500;  // Long press duration for cards
 const TAP_MAX_DELAY      = 300;  // for multi-tap detection
 
 // listen for updated hand counts from server
@@ -126,75 +126,6 @@ document.addEventListener('DOMContentLoaded', () => {
   playArea.appendChild(oppEl);
   updateOpponentDisplay();
 
-  // TRASH CAN ICON & HANDLERS
-  trashEl = document.createElement('div');
-  trashEl.id = 'trash-can';
-  Object.assign(trashEl.style, {
-    position:    'absolute',
-    bottom:      '60px',
-    right:       '5px',
-    width:       '30px',
-    height:      '30px',
-    fontSize:    '24px',
-    textAlign:   'center',
-    lineHeight:  '30px',
-    cursor:      'pointer',
-    zIndex:      '1002',
-    userSelect:  'none'
-  });
-  trashEl.textContent = '🗑️';
-  playArea.appendChild(trashEl);
-
-  // ─── TRASH-CAN DRAG/DROP ─────────────────────
-  trashEl.addEventListener('dragover', e => e.preventDefault());
-  trashEl.addEventListener('drop', e => {
-    e.preventDefault();
-    const json = e.dataTransfer.getData('application/json');
-    if (json) {
-      const { index, card } = JSON.parse(json);
-      socket.emit('return-card-from-table', { index, card });
-    } else {
-      const card = e.dataTransfer.getData('text/plain');
-      socket.emit('return-card-from-hand', { card });
-    }
-    socket.emit('shuffle-main-deck');
-    socket.emit('shuffle-special-deck');
-  });
-
-  // ─── GLOBAL TRASH WATCHER (one removal per tick) ────────────────────
-  setInterval(() => {
-    const trashRect = trashEl.getBoundingClientRect();
-    const cards     = document.querySelectorAll('.card');
-
-    for (const el of cards) {
-      const rect = el.getBoundingClientRect();
-
-      if (
-        rect.left   < trashRect.right  &&
-        rect.right  > trashRect.left   &&
-        rect.top    < trashRect.bottom &&
-        rect.bottom > trashRect.top
-      ) {
-        const isHand    = el.classList.contains('hand-card');
-        const cardValue = el.dataset.card;
-        const idx       = parseInt(el.dataset.idx, 10);
-
-        el.remove();
-
-        if (isHand) {
-          socket.emit('return-card-from-hand',  { card: cardValue });
-        } else {
-          socket.emit('return-card-from-table', { index: idx, card: cardValue });
-        }
-
-        socket.emit('shuffle-main-deck');
-        socket.emit('shuffle-special-deck');
-
-        break;
-      }
-    }
-  }, 150);
-
 }); // end DOMContentLoaded
 
 // SOCKET EVENTS
@@ -242,9 +173,15 @@ function renderHand() {
       socket.emit('shuffle-special-deck');
     });
 
-    // Touch-drag from hand → play-area OR trash
+    // Touch controls with long press to remove card
+    let longPressTimer = null;
+    let isDragging = false;
+    let touchStartTime = 0;
+
     img.addEventListener('touchstart', ts => {
       ts.preventDefault();
+      touchStartTime = Date.now();
+      isDragging = false;
       const touch = ts.touches[0];
       const clone = img.cloneNode();
       Object.assign(clone.style, {
@@ -256,41 +193,69 @@ function renderHand() {
       document.body.appendChild(clone);
 
       let startX = touch.clientX, startY = touch.clientY;
+
+      // Start long press timer
+      longPressTimer = setTimeout(() => {
+        // Long press detected - remove card and shuffle back to deck
+        clone.remove();
+        socket.emit('return-card-from-hand', { card: c });
+        socket.emit('shuffle-main-deck');
+        socket.emit('shuffle-special-deck');
+
+        // Visual feedback
+        showRemovalFeedback('Card returned to deck');
+
+        // Clear event listeners
+        document.removeEventListener('touchmove', onTouchMove);
+        document.removeEventListener('touchend', onTouchEnd);
+      }, CARD_LONG_PRESS_MS);
+
       function onTouchMove(tm) {
         tm.preventDefault();
         const t = tm.touches[0];
-        clone.style.left = `${t.clientX - CARD_HALF}px`;
-        clone.style.top  = `${t.clientY - CARD_HALF}px`;
+
+        // Check if movement is significant enough to be considered dragging
+        if (!isDragging && (Math.abs(t.clientX - startX) > 5 || Math.abs(t.clientY - startY) > 5)) {
+          isDragging = true;
+          clearTimeout(longPressTimer);
+        }
+
+        if (isDragging) {
+          clone.style.left = `${t.clientX - CARD_HALF}px`;
+          clone.style.top  = `${t.clientY - CARD_HALF}px`;
+        }
       }
+
       function onTouchEnd(te) {
         te.preventDefault();
+        clearTimeout(longPressTimer);
         document.removeEventListener('touchmove', onTouchMove);
-        document.removeEventListener('touchend',   onTouchEnd);
+        document.removeEventListener('touchend', onTouchEnd);
 
+        const touchDuration = Date.now() - touchStartTime;
         const up = te.changedTouches[0];
         const rPlay = playArea.getBoundingClientRect();
-        const rTrash = trashEl.getBoundingClientRect();
 
-        if (
-          up.clientX >= rTrash.left && up.clientX <= rTrash.right &&
-          up.clientY >= rTrash.top  && up.clientY <= rTrash.bottom
-        ) {
-          socket.emit('return-card-from-hand', { card: c });
-          socket.emit('shuffle-main-deck');
-          socket.emit('shuffle-special-deck');
-        } else if (
-          up.clientX >= rPlay.left && up.clientX <= rPlay.right &&
-          up.clientY >= rPlay.top  && up.clientY <= rPlay.bottom
-        ) {
-          const px = up.clientX - rPlay.left - CARD_HALF;
-          const py = up.clientY - rPlay.top  - CARD_HALF;
-          playCard(c, px, py);
+        if (isDragging) {
+          // Handle drag to play area
+          if (
+            up.clientX >= rPlay.left && up.clientX <= rPlay.right &&
+            up.clientY >= rPlay.top  && up.clientY <= rPlay.bottom
+          ) {
+            const px = up.clientX - rPlay.left - CARD_HALF;
+            const py = up.clientY - rPlay.top  - CARD_HALF;
+            playCard(c, px, py);
+          }
+        } else if (touchDuration < CARD_LONG_PRESS_MS) {
+          // Short tap - show overlay
+          showCardOverlay(img.src);
         }
 
         clone.remove();
       }
+
       document.addEventListener('touchmove', onTouchMove);
-      document.addEventListener('touchend',  onTouchEnd);
+      document.addEventListener('touchend', onTouchEnd);
     });
 
     hd.appendChild(img);
@@ -353,46 +318,72 @@ function renderTable() {
       document.addEventListener('mouseup',   onUp);
     });
 
-    // Touch-drag / discard
+    // Touch controls with long press to remove card
+    let longPressTimer = null;
+    let touchDragging = false;
+    let touchStartTime = 0;
+
     img.addEventListener('touchstart', tn => {
       tn.preventDefault();
-      let dragging = false;
+      touchStartTime = Date.now();
+      touchDragging = false;
       const t0 = tn.touches[0];
       const startX = t0.clientX, startY = t0.clientY;
       const oX = e.x, oY = e.y;
 
+      // Start long press timer
+      longPressTimer = setTimeout(() => {
+        // Long press detected - remove card and shuffle back to deck
+        socket.emit('return-card-from-table', { index: i, card: e.card });
+        socket.emit('shuffle-main-deck');
+        socket.emit('shuffle-special-deck');
+
+        // Visual feedback
+        showRemovalFeedback('Card returned to deck');
+
+        // Clear event listeners
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onEnd);
+      }, CARD_LONG_PRESS_MS);
+
       function onMove(tm) {
-        dragging = true;
         const t = tm.touches[0];
-        img.style.left = `${oX + (t.clientX - startX)}px`;
-        img.style.top  = `${oY + (t.clientY - startY)}px`;
+
+        // Check if movement is significant enough to be considered dragging
+        if (!touchDragging && (Math.abs(t.clientX - startX) > 5 || Math.abs(t.clientY - startY) > 5)) {
+          touchDragging = true;
+          clearTimeout(longPressTimer);
+        }
+
+        if (touchDragging) {
+          img.style.left = `${oX + (t.clientX - startX)}px`;
+          img.style.top  = `${oY + (t.clientY - startY)}px`;
+        }
       }
+
       function onEnd(te) {
         te.preventDefault();
+        clearTimeout(longPressTimer);
         document.removeEventListener('touchmove', onMove);
-        document.removeEventListener('touchend',  onEnd);
+        document.removeEventListener('touchend', onEnd);
 
-        const up = te.changedTouches[0];
-        const rTrash = trashEl.getBoundingClientRect();
-        if (
-          up.clientX >= rTrash.left && up.clientX <= rTrash.right &&
-          up.clientY >= rTrash.top  && up.clientY <= rTrash.bottom
-        ) {
-          socket.emit('return-card-from-table', { index: i, card: e.card });
-          socket.emit('shuffle-main-deck');
-          socket.emit('shuffle-special-deck');
-        } else if (dragging) {
+        const touchDuration = Date.now() - touchStartTime;
+
+        if (touchDragging) {
+          // Handle drag movement
           socket.emit('move-table-card', {
             index: i,
             x:     parseInt(img.style.left,10),
             y:     parseInt(img.style.top,10)
           });
-        } else {
+        } else if (touchDuration < CARD_LONG_PRESS_MS) {
+          // Short tap - show overlay
           showCardOverlay(img.src);
         }
       }
+
       document.addEventListener('touchmove', onMove);
-      document.addEventListener('touchend',  onEnd);
+      document.addEventListener('touchend', onEnd);
     });
 
     // Click handler
@@ -501,8 +492,30 @@ function renderTable() {
   playArea.appendChild(help);
 
   // Re-append persistent UI so they stay on top
-  playArea.appendChild(trashEl);
   playArea.appendChild(oppEl);
+}
+
+function showRemovalFeedback(message) {
+  const feedback = document.createElement('div');
+  feedback.textContent = message;
+  Object.assign(feedback.style, {
+    position: 'fixed',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    background: 'rgba(0, 0, 0, 0.8)',
+    color: 'white',
+    padding: '10px 20px',
+    borderRadius: '5px',
+    fontSize: '16px',
+    zIndex: '9999',
+    pointerEvents: 'none'
+  });
+  document.body.appendChild(feedback);
+
+  setTimeout(() => {
+    feedback.remove();
+  }, 1500);
 }
 
 function attachControlBehavior(el, idx, type, min, max) {
@@ -536,7 +549,7 @@ function attachControlBehavior(el, idx, type, min, max) {
     }, 500);
   }
 
-  // MOUSE: drag to move (with trash-can drop)
+  // MOUSE: drag to move
   el.addEventListener('mousedown', dn => {
     dn.preventDefault();
     isDragging = false;
@@ -552,28 +565,14 @@ function attachControlBehavior(el, idx, type, min, max) {
       el.style.top  = `${origY + (mv.clientY - startY)}px`;
     }
 
-    function onUp(upEvent) {
+    function onUp() {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup',   onUp);
-
-      const trashRect = trashEl.getBoundingClientRect();
-      const x = upEvent.clientX;
-      const y = upEvent.clientY;
-
-      if (
-        x >= trashRect.left  && x <= trashRect.right &&
-        y >= trashRect.top   && y <= trashRect.bottom
-      ) {
-        socket.emit(`return-${type}`, { index: idx });
-        socket.emit('shuffle-main-deck');
-        socket.emit('shuffle-special-deck');
-      } else {
-        socket.emit(`move-${type}`, {
-          index: idx,
-          x: parseInt(el.style.left,  10),
-          y: parseInt(el.style.top,   10)
-        });
-      }
+      socket.emit(`move-${type}`, {
+        index: idx,
+        x: parseInt(el.style.left,  10),
+        y: parseInt(el.style.top,   10)
+      });
     }
 
     document.addEventListener('mousemove', onMove);
